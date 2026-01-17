@@ -33,14 +33,37 @@
                             :accessor machine-ignore-invalid-triggers
                             :initform nil
                             :type boolean
-                            :documentation "If T, invalid triggers return NIL instead of signaling an error"))
+                            :documentation "If T, invalid triggers return NIL instead of signaling an error")
+   (auto-transition-depth :initarg :auto-transition-depth
+                          :accessor machine-auto-transition-depth
+                          :initform 0
+                          :type integer
+                          :documentation "Current depth of auto-transition chain")
+   (max-auto-transitions :initarg :max-auto-transitions
+                         :accessor machine-max-auto-transitions
+                         :initform 10
+                         :type integer
+                         :documentation "Maximum allowed auto-transition chain depth")
+   (timeout-thread :initarg :timeout-thread
+                   :accessor machine-timeout-thread
+                   :initform nil
+                   :documentation "Current timeout thread, or NIL if no timeout active")
+   (timeout-lock :initarg :timeout-lock
+                 :accessor machine-timeout-lock
+                 :initform (bt:make-lock "timeout-lock")
+                 :documentation "Lock for thread-safe timeout operations")
+   (timeout-cancelled :initarg :timeout-cancelled
+                      :accessor machine-timeout-cancelled
+                      :initform nil
+                      :type boolean
+                      :documentation "Flag to signal timeout thread should abort"))
   (:documentation "The finite state machine controller"))
 
 (defmethod print-object ((machine machine) stream)
   (print-unreadable-object (machine stream :type t :identity t)
     (format stream "state: ~S" (machine-current-state machine))))
 
-(defun add-state (machine state-or-name &key on-enter on-exit)
+(defun add-state (machine state-or-name &key on-enter on-exit timeout timeout-trigger)
   "Add a state to the machine.
 STATE-OR-NAME can be a state object or a symbol (state name).
 Returns the state object."
@@ -48,7 +71,9 @@ Returns the state object."
                  (state state-or-name)
                  (symbol (make-state state-or-name
                                      :on-enter on-enter
-                                     :on-exit on-exit)))))
+                                     :on-exit on-exit
+                                     :timeout timeout
+                                     :timeout-trigger timeout-trigger)))))
     (setf (gethash (state-name state) (machine-states machine)) state)
     state))
 
@@ -84,3 +109,77 @@ Returns a list of matching transition objects."
                      (and (eq (transition-trigger trans) trigger)
                           (transition-matches-source-p trans current)))
                    (machine-transitions machine))))
+
+;;; ---------------------------------------------------------------------------
+;;; Machine Inheritance
+;;; ---------------------------------------------------------------------------
+
+(defun copy-state (state)
+  "Create a deep copy of STATE.
+Callbacks are copied by reference (they are assumed to be functions)."
+  (make-instance 'state
+                 :name (state-name state)
+                 :on-enter (copy-list (state-on-enter state))
+                 :on-exit (copy-list (state-on-exit state))
+                 :timeout (state-timeout state)
+                 :timeout-trigger (state-timeout-trigger state)))
+
+(defun copy-transition (trans)
+  "Create a deep copy of TRANS.
+Callbacks and conditions are copied by reference."
+  (make-instance 'transition
+                 :trigger (transition-trigger trans)
+                 :source (let ((src (transition-source trans)))
+                           (if (listp src) (copy-list src) src))
+                 :dest (transition-dest trans)
+                 :before (copy-list (transition-before trans))
+                 :after (copy-list (transition-after trans))
+                 :prepare (copy-list (transition-prepare trans))
+                 :conditions (copy-list (transition-conditions trans))
+                 :finalize (copy-list (transition-finalize trans))
+                 :auto (transition-auto-p trans)))
+
+(defun inherit-states (child parent &key (override t))
+  "Copy states from PARENT machine to CHILD machine.
+If OVERRIDE is T (default), child definitions take precedence.
+If OVERRIDE is NIL, parent definitions take precedence.
+Returns the child machine."
+  (maphash (lambda (name state)
+             (let ((existing (get-state child name)))
+               (when (or (not existing)
+                         (not override))
+                 (setf (gethash name (machine-states child))
+                       (copy-state state)))))
+           (machine-states parent))
+  child)
+
+(defun inherit-transitions (child parent &key (override t))
+  "Copy transitions from PARENT machine to CHILD machine.
+If OVERRIDE is T (default), child definitions take precedence.
+If OVERRIDE is NIL, parent definitions take precedence (duplicates allowed).
+Returns the child machine."
+  (let ((parent-transitions (mapcar #'copy-transition (machine-transitions parent))))
+    (if override
+        ;; Add parent transitions that don't conflict with child
+        (dolist (ptrans parent-transitions)
+          (let ((exists (find-if (lambda (ctrans)
+                                   (and (eq (transition-trigger ptrans)
+                                            (transition-trigger ctrans))
+                                        (equal (transition-source ptrans)
+                                               (transition-source ctrans))))
+                                 (machine-transitions child))))
+            (unless exists
+              (push ptrans (machine-transitions child)))))
+        ;; Add all parent transitions (parent wins, add first)
+        (setf (machine-transitions child)
+              (append parent-transitions (machine-transitions child)))))
+  child)
+
+(defun inherit-machine (child parent &key (override t))
+  "Inherit both states and transitions from PARENT to CHILD.
+If OVERRIDE is T (default), child definitions take precedence.
+If OVERRIDE is NIL, parent definitions take precedence.
+Returns the child machine."
+  (inherit-states child parent :override override)
+  (inherit-transitions child parent :override override)
+  child)

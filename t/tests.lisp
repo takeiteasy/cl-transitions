@@ -472,3 +472,386 @@
     ;; Advance timer past red
     (setf timer 60)
     (is (eq :green (fire m :tick)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Reflexive Transition Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite reflexive-tests :in cl-transitions-suite)
+(in-suite reflexive-tests)
+
+(test reflexive-stays-in-state
+  "Test reflexive transition stays in same state"
+  (let ((m (make-machine
+            :states '(:a)
+            :initial :a
+            :transitions '((:trigger :update :source :a :dest :=)))))
+    (is (eq :a (current-state m)))
+    (fire m :update)
+    (is (eq :a (current-state m)))))
+
+(test reflexive-with-same-keyword
+  "Test :same keyword works like :="
+  (let ((m (make-machine
+            :states '(:a)
+            :initial :a
+            :transitions '((:trigger :update :source :a :dest :same)))))
+    (is (eq :a (current-state m)))
+    (fire m :update)
+    (is (eq :a (current-state m)))))
+
+(test reflexive-skips-on-enter-on-exit
+  "Test reflexive transition skips on-enter/on-exit callbacks"
+  (let* ((log nil)
+         (on-enter-fn (lambda (e) (declare (ignore e)) (push :on-enter log)))
+         (on-exit-fn (lambda (e) (declare (ignore e)) (push :on-exit log)))
+         (before-fn (lambda (e) (declare (ignore e)) (push :before log)))
+         (after-fn (lambda (e) (declare (ignore e)) (push :after log)))
+         (m (make-machine
+             :states (list (list :name :a
+                                 :on-enter (list on-enter-fn)
+                                 :on-exit (list on-exit-fn)))
+             :initial :a
+             :transitions (list (list :trigger :update
+                                      :source :a
+                                      :dest :=
+                                      :before (list before-fn)
+                                      :after (list after-fn))))))
+    (fire m :update)
+    ;; on-enter and on-exit should NOT be in the log
+    (is (null (member :on-enter log)))
+    (is (null (member :on-exit log)))
+    ;; but before and after should be
+    (is (member :before log))
+    (is (member :after log))))
+
+(test reflexive-dest-p-function
+  "Test reflexive-dest-p helper function"
+  (is (reflexive-dest-p :=))
+  (is (reflexive-dest-p :same))
+  (is (reflexive-dest-p :internal))
+  (is (not (reflexive-dest-p :other-state)))
+  (is (not (reflexive-dest-p nil))))
+
+;;; ---------------------------------------------------------------------------
+;;; Finalize Callback Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite finalize-tests :in cl-transitions-suite)
+(in-suite finalize-tests)
+
+(test finalize-runs-on-success
+  "Test finalize callback runs on successful transition"
+  (let* ((finalized nil)
+         (finalize-fn (lambda (e)
+                        (declare (ignore e))
+                        (setf finalized t)))
+         (m (make-machine
+             :states '(:a :b)
+             :initial :a
+             :transitions (list (list :trigger :go
+                                      :source :a
+                                      :dest :b
+                                      :finalize (list finalize-fn))))))
+    (fire m :go)
+    (is (eq t finalized))
+    (is (eq :b (current-state m)))))
+
+(test finalize-runs-on-condition-failure
+  "Test finalize callback runs when conditions fail"
+  (let* ((finalized nil)
+         (succeeded nil)
+         (finalize-fn (lambda (e)
+                        (setf finalized t)
+                        (setf succeeded (event-transition-succeeded e))))
+         (m (make-machine
+             :states '(:a :b)
+             :initial :a
+             :transitions (list (list :trigger :go
+                                      :source :a
+                                      :dest :b
+                                      :conditions (list (constantly nil))
+                                      :finalize (list finalize-fn))))))
+    (fire m :go)
+    (is (eq t finalized))
+    (is (null succeeded))
+    (is (eq :a (current-state m)))))
+
+(test finalize-detects-success
+  "Test finalize can detect success via event-transition-succeeded"
+  (let* ((success-value nil)
+         (finalize-fn (lambda (e)
+                        (setf success-value (event-transition-succeeded e))))
+         (m (make-machine
+             :states '(:a :b)
+             :initial :a
+             :transitions (list (list :trigger :go
+                                      :source :a
+                                      :dest :b
+                                      :finalize (list finalize-fn))))))
+    (fire m :go)
+    (is (eq t success-value))))
+
+(test multiple-finalize-callbacks
+  "Test multiple finalize callbacks all run"
+  (let* ((count 0)
+         (fn1 (lambda (e) (declare (ignore e)) (incf count)))
+         (fn2 (lambda (e) (declare (ignore e)) (incf count)))
+         (fn3 (lambda (e) (declare (ignore e)) (incf count)))
+         (m (make-machine
+             :states '(:a :b)
+             :initial :a
+             :transitions (list (list :trigger :go
+                                      :source :a
+                                      :dest :b
+                                      :finalize (list fn1 fn2 fn3))))))
+    (fire m :go)
+    (is (= 3 count))))
+
+;;; ---------------------------------------------------------------------------
+;;; Auto-Transition Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite auto-transition-tests :in cl-transitions-suite)
+(in-suite auto-transition-tests)
+
+(test auto-transition-fires-on-entry
+  "Test auto-transition fires when entering state"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions (list '(:trigger :go :source :a :dest :b)
+                               (list :trigger :auto-go :source :b :dest :c :auto t)))))
+    (is (eq :a (current-state m)))
+    (fire m :go)
+    ;; Should have auto-transitioned from :b to :c
+    (is (eq :c (current-state m)))))
+
+(test auto-transition-chain
+  "Test chain of auto-transitions (a->b->c->d)"
+  (let ((m (make-machine
+            :states '(:a :b :c :d)
+            :initial :a
+            :transitions (list '(:trigger :start :source :a :dest :b)
+                               (list :trigger :auto1 :source :b :dest :c :auto t)
+                               (list :trigger :auto2 :source :c :dest :d :auto t)))))
+    (fire m :start)
+    (is (eq :d (current-state m)))))
+
+(test auto-transition-respects-conditions
+  "Test auto-transition respects conditions"
+  (let* ((allowed nil)
+         (check-fn (lambda (e) (declare (ignore e)) allowed))
+         (m (make-machine
+             :states '(:a :b :c)
+             :initial :a
+             :transitions (list '(:trigger :go :source :a :dest :b)
+                                (list :trigger :auto-go :source :b :dest :c
+                                      :auto t
+                                      :conditions (list check-fn))))))
+    (fire m :go)
+    ;; Auto-transition should not fire because condition is false
+    (is (eq :b (current-state m)))
+    ;; Now allow and trigger manually
+    (setf allowed t)
+    (fire m :auto-go)
+    (is (eq :c (current-state m)))))
+
+(test auto-transition-loop-prevention
+  "Test infinite loop prevention for auto-transitions"
+  (let ((m (make-machine
+            :states '(:a :b)
+            :initial :a
+            :max-auto-transitions 3
+            :transitions (list '(:trigger :start :source :a :dest :b)
+                               (list :trigger :loop1 :source :b :dest :a :auto t)
+                               (list :trigger :loop2 :source :a :dest :b :auto t)))))
+    (signals auto-transition-loop-error
+      (fire m :start))))
+
+(test auto-transition-callbacks-execute
+  "Test auto-transition callbacks execute properly"
+  (let* ((log nil)
+         (before-fn (lambda (e) (declare (ignore e)) (push :before log)))
+         (after-fn (lambda (e) (declare (ignore e)) (push :after log)))
+         (m (make-machine
+             :states '(:a :b :c)
+             :initial :a
+             :transitions (list '(:trigger :go :source :a :dest :b)
+                                (list :trigger :auto-go :source :b :dest :c
+                                      :auto t
+                                      :before (list before-fn)
+                                      :after (list after-fn))))))
+    (fire m :go)
+    (is (member :before log))
+    (is (member :after log))))
+
+;;; ---------------------------------------------------------------------------
+;;; Machine Inheritance Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite inheritance-tests :in cl-transitions-suite)
+(in-suite inheritance-tests)
+
+(test basic-state-inheritance
+  "Test basic state inheritance"
+  (let* ((parent (make-machine
+                  :states '(:a :b)
+                  :initial :a
+                  :transitions nil))
+         (child (make-machine
+                 :states '(:c)
+                 :initial :a
+                 :transitions nil
+                 :inherit-from parent)))
+    ;; Child should have all parent states plus its own
+    (is (not (null (get-state child :a))))
+    (is (not (null (get-state child :b))))
+    (is (not (null (get-state child :c))))))
+
+(test basic-transition-inheritance
+  "Test basic transition inheritance"
+  (let* ((parent (make-machine
+                  :states '(:a :b)
+                  :initial :a
+                  :transitions '((:trigger :go :source :a :dest :b))))
+         (child (make-machine
+                 :states nil
+                 :initial :a
+                 :transitions nil
+                 :inherit-from parent)))
+    ;; Child should be able to use parent's transition
+    (fire child :go)
+    (is (eq :b (current-state child)))))
+
+(test child-overrides-parent
+  "Test child definitions override parent (default)"
+  (let* ((parent-log nil)
+         (child-log nil)
+         (parent-fn (lambda (e) (declare (ignore e)) (push :parent parent-log)))
+         (child-fn (lambda (e) (declare (ignore e)) (push :child child-log)))
+         (parent (make-machine
+                  :states (list (list :name :a :on-enter (list parent-fn)))
+                  :initial :a
+                  :transitions nil))
+         (child (make-machine
+                 :states (list (list :name :a :on-enter (list child-fn)))
+                 :initial :a
+                 :transitions nil
+                 :inherit-from parent)))
+    ;; Child's state definition should be used, not parent's
+    ;; When we fire a transition that enters :a, child's callback should run
+    (add-state child :b)
+    (add-transition child (cl-transitions::make-transition :go :b :a))
+    (set-state child :b)
+    (fire child :go)
+    (is (member :child child-log))
+    (is (null parent-log))))
+
+(test inherited-machine-is-independent
+  "Test inherited machine is independent from parent"
+  (let* ((parent (make-machine
+                  :states '(:a :b)
+                  :initial :a
+                  :transitions '((:trigger :go :source :a :dest :b))))
+         (child (make-machine
+                 :states nil
+                 :initial :a
+                 :transitions nil
+                 :inherit-from parent)))
+    ;; Fire transition on child
+    (fire child :go)
+    (is (eq :b (current-state child)))
+    ;; Parent should still be at :a
+    (is (eq :a (current-state parent)))))
+
+(test copy-state-function
+  "Test copy-state creates independent copy"
+  (let* ((original (cl-transitions::make-state :test
+                                               :on-enter (list #'identity)
+                                               :on-exit (list #'identity)))
+         (copied (copy-state original)))
+    (is (eq :test (state-name copied)))
+    (is (= 1 (length (state-on-enter copied))))
+    (is (= 1 (length (state-on-exit copied))))
+    ;; Should be different objects
+    (is (not (eq original copied)))))
+
+(test copy-transition-function
+  "Test copy-transition creates independent copy"
+  (let* ((original (cl-transitions::make-transition :go :a :b
+                                                    :before (list #'identity)
+                                                    :after (list #'identity)))
+         (copied (copy-transition original)))
+    (is (eq :go (transition-trigger copied)))
+    (is (eq :a (transition-source copied)))
+    (is (eq :b (transition-dest copied)))
+    ;; Should be different objects
+    (is (not (eq original copied)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Timeout Transition Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite timeout-tests :in cl-transitions-suite)
+(in-suite timeout-tests)
+
+(test state-with-timeout-slots
+  "Test state can have timeout and timeout-trigger slots"
+  (let ((state (cl-transitions::make-state :waiting
+                                           :timeout 5
+                                           :timeout-trigger :done)))
+    (is (= 5 (state-timeout state)))
+    (is (eq :done (state-timeout-trigger state)))))
+
+(test states-without-timeout
+  "Test states without timeout work normally"
+  (let ((m (make-machine
+            :states '(:a :b)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)))))
+    (fire m :go)
+    (is (eq :b (current-state m)))))
+
+(test timeout-fires-after-duration
+  "Test timeout fires after specified duration"
+  (let ((m (make-machine
+            :states (list (list :name :waiting :timeout 0.1 :timeout-trigger :done)
+                          :finished)
+            :initial :waiting
+            :transitions '((:trigger :done :source :waiting :dest :finished)))))
+    (is (eq :waiting (current-state m)))
+    ;; Wait for timeout to fire
+    (sleep 0.2)
+    ;; Should have transitioned
+    (is (eq :finished (current-state m)))))
+
+(test timeout-cancelled-on-early-exit
+  "Test timeout is cancelled when leaving state early"
+  (let ((m (make-machine
+            :states (list (list :name :waiting :timeout 0.5 :timeout-trigger :timeout)
+                          :cancelled
+                          :timed-out)
+            :initial :waiting
+            :transitions '((:trigger :cancel :source :waiting :dest :cancelled)
+                           (:trigger :timeout :source :waiting :dest :timed-out)))))
+    ;; Leave the state before timeout
+    (fire m :cancel)
+    (is (eq :cancelled (current-state m)))
+    ;; Wait past the original timeout
+    (sleep 0.6)
+    ;; Should still be in cancelled state
+    (is (eq :cancelled (current-state m)))))
+
+(test cancel-timeout-function
+  "Test cancel-timeout function"
+  (let ((m (make-machine
+            :states (list (list :name :waiting :timeout 0.5 :timeout-trigger :done)
+                          :finished)
+            :initial :waiting
+            :transitions '((:trigger :done :source :waiting :dest :finished)))))
+    ;; Manually cancel the timeout
+    (cancel-timeout m)
+    (sleep 0.6)
+    ;; Should still be waiting
+    (is (eq :waiting (current-state m)))))

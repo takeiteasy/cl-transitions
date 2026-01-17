@@ -8,12 +8,15 @@
    #:invalid-state-error
    #:invalid-trigger-error
    #:condition-failed-error
+   #:auto-transition-loop-error
 
    ;; State class
    #:state
    #:state-name
    #:state-on-enter
    #:state-on-exit
+   #:state-timeout
+   #:state-timeout-trigger
 
    ;; Transition class
    #:transition
@@ -24,6 +27,10 @@
    #:transition-after
    #:transition-prepare
    #:transition-conditions
+   #:transition-finalize
+   #:transition-auto-p
+   #:reflexive-dest-p
+   #:resolve-transition-dest
 
    ;; Event-data class
    #:event-data
@@ -33,6 +40,7 @@
    #:event-source
    #:event-dest
    #:event-args
+   #:event-transition-succeeded
 
    ;; Machine class
    #:machine
@@ -43,6 +51,7 @@
    #:machine-initial-state
    #:machine-auto-transitions
    #:machine-ignore-invalid-triggers
+   #:machine-max-auto-transitions
 
    ;; Core protocol
    #:add-state
@@ -57,4 +66,16 @@
 
    ;; High-level API
    #:make-machine
-   #:define-machine))
+   #:define-machine
+
+   ;; Machine inheritance
+   #:copy-state
+   #:copy-transition
+   #:inherit-states
+   #:inherit-transitions
+   #:inherit-machine
+
+   ;; Timeout functions
+   #:cancel-timeout
+   #:start-timeout
+   #:setup-state-timeout))

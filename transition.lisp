@@ -34,7 +34,17 @@
                :accessor transition-conditions
                :initform nil
                :type list
-               :documentation "Guard predicates that must all return true"))
+               :documentation "Guard predicates that must all return true")
+   (finalize :initarg :finalize
+             :accessor transition-finalize
+             :initform nil
+             :type list
+             :documentation "Callbacks that always run after transition attempt")
+   (auto :initarg :auto
+         :accessor transition-auto-p
+         :initform nil
+         :type boolean
+         :documentation "If T, this transition fires automatically on state entry"))
   (:documentation "Represents a transition between states in the FSM"))
 
 (defmethod print-object ((trans transition) stream)
@@ -50,7 +60,7 @@
         ((listp x) x)
         (t (list x))))
 
-(defun make-transition (trigger source dest &key before after prepare conditions)
+(defun make-transition (trigger source dest &key before after prepare conditions finalize auto)
   "Create a new transition with the given parameters."
   (make-instance 'transition
                  :trigger trigger
@@ -59,7 +69,9 @@
                  :before (ensure-list before)
                  :after (ensure-list after)
                  :prepare (ensure-list prepare)
-                 :conditions (ensure-list conditions)))
+                 :conditions (ensure-list conditions)
+                 :finalize (ensure-list finalize)
+                 :auto auto))
 
 (defun transition-matches-source-p (transition current-state)
   "Check if TRANSITION can be triggered from CURRENT-STATE.
@@ -69,3 +81,17 @@ Returns T if source is :* (wildcard), matches exactly, or is in source list."
       ((eq source :*) t)
       ((listp source) (member current-state source))
       (t (eq source current-state)))))
+
+(defun reflexive-dest-p (dest)
+  "Check if DEST indicates a reflexive (internal) transition.
+Reflexive destinations are :=, :same, or :internal."
+  (member dest '(:= :same :internal)))
+
+(defun resolve-transition-dest (transition current-state)
+  "Resolve the actual destination state for TRANSITION.
+If the transition's dest is reflexive (:=, :same, :internal), returns CURRENT-STATE.
+Otherwise returns the transition's dest."
+  (let ((dest (transition-dest transition)))
+    (if (reflexive-dest-p dest)
+        current-state
+        dest)))

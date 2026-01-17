@@ -23,3 +23,20 @@ Returns NIL on the first condition that returns NIL."
   (every (lambda (condition)
            (invoke-callback condition event-data))
          conditions))
+
+(defun invoke-finalize-callbacks (callbacks event-data)
+  "Invoke finalize callbacks, ensuring all run even if some error.
+Errors are caught and collected; the first error is re-signaled after
+all callbacks have been invoked. Returns a list of results for
+successful callbacks."
+  (let ((results nil)
+        (first-error nil))
+    (dolist (cb callbacks)
+      (handler-case
+          (push (invoke-callback cb event-data) results)
+        (error (e)
+          (unless first-error
+            (setf first-error e)))))
+    (when first-error
+      (error first-error))
+    (nreverse results)))

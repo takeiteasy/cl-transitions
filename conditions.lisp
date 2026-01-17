@@ -30,3 +30,11 @@
              (format stream "Condition ~A failed for trigger ~A"
                      (condition-failed-error-condition-fn condition)
                      (condition-failed-error-trigger condition)))))
+
+(define-condition auto-transition-loop-error (transition-error)
+  ((depth :initarg :depth :reader auto-transition-loop-error-depth)
+   (max-depth :initarg :max-depth :reader auto-transition-loop-error-max-depth))
+  (:report (lambda (condition stream)
+             (format stream "Auto-transition loop detected: depth ~A exceeds max ~A"
+                     (auto-transition-loop-error-depth condition)
+                     (auto-transition-loop-error-max-depth condition)))))

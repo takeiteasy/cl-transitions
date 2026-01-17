@@ -25,7 +25,12 @@
          :accessor event-args
          :initform nil
          :type list
-         :documentation "Additional arguments passed to fire"))
+         :documentation "Additional arguments passed to fire")
+   (transition-succeeded :initarg :transition-succeeded
+                         :accessor event-transition-succeeded
+                         :initform t
+                         :type boolean
+                         :documentation "Whether the transition succeeded (T) or failed (NIL)"))
   (:documentation "Data passed to callbacks during transition execution"))
 
 (defmethod print-object ((event event-data) stream)
