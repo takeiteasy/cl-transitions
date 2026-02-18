@@ -1,8 +1,7 @@
 # cl-transitions
 
-Common Lisp port of [pytransitions/transitions](https://github.com/pytransitions/transitions)
 
-A finite state machine library for Common Lisp with a clean, expressive API.
+A finite state machine library for Common Lisp with a clean, expressive API based off [pytransitions/transitions](https://github.com/pytransitions/transitions).
 
 ## Installation
 
@@ -259,4 +258,4 @@ Timeouts are cancelled when leaving the state early.
 
 ## License
 
-GPLv3
+[GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html)
