@@ -19,15 +19,24 @@
                (:file "api"))
   :in-order-to ((test-op (test-op #:cl-transitions/tests))))
 
+(asdf:defsystem #:cl-transitions/graphviz
+  :description "Graphviz export for cl-transitions"
+  :author "George Watson"
+  :license "GPLv3"
+  :depends-on (#:cl-transitions #:cl-dot)
+  :serial t
+  :components ((:file "graphviz")))
+
 (asdf:defsystem #:cl-transitions/tests
   :description "Tests for cl-transitions"
   :author "George Watson"
   :license "GPLv3"
-  :depends-on (#:cl-transitions #:fiveam)
+  :depends-on (#:cl-transitions #:cl-transitions/graphviz #:fiveam)
   :serial t
   :pathname "t"
   :components ((:file "package")
-               (:file "tests"))
+               (:file "tests")
+               (:file "graphviz"))
   :perform (test-op (op c)
                     (uiop:symbol-call :fiveam :run!
                                       (uiop:find-symbol* :cl-transitions-suite

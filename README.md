@@ -27,6 +27,7 @@ A finite state machine library for Common Lisp with a clean, expressive API base
 - **State tags** - Group and query states by tags
 - **Nested states** - States containing sub-machines for hierarchical FSM design
 - **Queued mode** - Queue triggers fired during transitions to prevent re-entrancy
+- **Graphviz export** - Generate state diagram DOT files and render to images
 
 ## Quick Start
 
@@ -387,6 +388,48 @@ Queued mode ensures each transition runs to completion before the next starts. T
 
 Queued mode requires no external dependencies — it uses a simple list and boolean flag.
 
+## Graphviz Export
+
+Generate visual state diagrams from your state machines. This is an optional subsystem that depends on [cl-dot](https://github.com/michaelw/cl-dot) (available through Quicklisp).
+
+```lisp
+(ql:quickload :cl-transitions/graphviz)
+```
+
+### DOT Output
+
+```lisp
+(let ((m (make-machine
+          :states '(:solid :liquid :gas)
+          :initial :solid
+          :transitions '((:trigger :melt :source :solid :dest :liquid)
+                         (:trigger :freeze :source :liquid :dest :solid)
+                         (:trigger :boil :source :liquid :dest :gas)))))
+  ;; Print DOT string
+  (cl-transitions/graphviz:machine->dot m)
+
+  ;; Write to file
+  (cl-transitions/graphviz:write-dot m "/tmp/matter.dot"))
+```
+
+### Rendering to Images
+
+Requires [Graphviz](https://graphviz.org/) (`dot` command) to be installed.
+
+```lisp
+(cl-transitions/graphviz:draw m "/tmp/matter.png")
+(cl-transitions/graphviz:draw m "/tmp/matter.svg" :format "svg")
+```
+
+Visual features:
+- Regular states rendered as rounded boxes with light grey fill
+- Initial state has double periphery and light green fill
+- Current state highlighted with light blue fill
+- Transitions labeled with trigger names
+- Auto-transitions shown as dashed edges
+- Reflexive transitions (`:=`, `:same`) rendered as self-loops
+- Wildcard sources (`:*`) expand to edges from all states
+
 ## Timeout Transitions
 
 States can auto-transition after a duration:
@@ -462,21 +505,6 @@ Timeouts are cancelled when leaving the state early.
 (ql:quickload :cl-transitions/tests)
 (cl-transitions/tests:run-tests)
 ```
-
-## TODO
-
-- [x] Auto-transitions - Transitions that fire automatically when entering a state
-- [x] Reflexive transitions - dest: '=' to stay in same state (internal transitions)
-- [x] Queued/Async mode - Queue triggers during transition execution, process sequentially
-- [x] Hierarchical/Nested FSM - States containing sub-machines (NestedState)
-- [x] State tags - Grouping states with tags for querying
-- [x] Dynamic trigger methods - Auto-generated trigger functions on model objects
-- [x] Transition reflection - get_transitions(), get_triggers() introspection
-- [ ] Graphviz export - Generate state diagrams
-- [x] Finalize callbacks - Always run after transition (even on failure)
-- [x] State machine inheritance - Extending/composing machines
-- [x] Ordered transitions - Priority when multiple transitions match
-- [x] Timeout transitions - Auto-fire after duration
 
 ## License
 
