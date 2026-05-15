@@ -103,12 +103,40 @@ Returns the new state name."
 
 (defun find-transitions-for-trigger (machine trigger)
   "Find all transitions matching TRIGGER from the current state.
-Returns a list of matching transition objects."
+Returns a list of matching transition objects, sorted by priority
+(highest first). Transitions with equal priority preserve their
+relative order (stable sort)."
   (let ((current (machine-current-state machine)))
-    (remove-if-not (lambda (trans)
-                     (and (eq (transition-trigger trans) trigger)
-                          (transition-matches-source-p trans current)))
-                   (machine-transitions machine))))
+    (stable-sort (remove-if-not (lambda (trans)
+                                  (and (eq (transition-trigger trans) trigger)
+                                       (transition-matches-source-p trans current)))
+                                (machine-transitions machine))
+                 #'>
+                 :key #'transition-priority)))
+
+(defun find-transitions (machine &key trigger source dest)
+  "Find transitions matching optional filters. All filters are ANDed.
+TRIGGER filters by trigger symbol.
+SOURCE filters by source state (supports wildcard/:* matching).
+DEST filters by destination state.
+Returns a list of matching transition objects."
+  (remove-if-not (lambda (trans)
+                   (and (or (null trigger) (eq (transition-trigger trans) trigger))
+                        (or (null source) (transition-matches-source-p trans source))
+                        (or (null dest) (eq (transition-dest trans) dest))))
+                 (machine-transitions machine)))
+
+(defun get-triggers (machine &optional state)
+  "Get all trigger symbols available from STATE (defaults to current state).
+A trigger is available if there is at least one transition with that
+trigger whose source matches the given state. Conditions are not checked.
+Returns a list of unique trigger symbols."
+  (let ((state (or state (machine-current-state machine))))
+    (delete-duplicates
+     (mapcar #'transition-trigger
+             (remove-if-not (lambda (trans)
+                              (transition-matches-source-p trans state))
+                            (machine-transitions machine))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Machine Inheritance
@@ -135,9 +163,10 @@ Callbacks and conditions are copied by reference."
                  :before (copy-list (transition-before trans))
                  :after (copy-list (transition-after trans))
                  :prepare (copy-list (transition-prepare trans))
-                 :conditions (copy-list (transition-conditions trans))
-                 :finalize (copy-list (transition-finalize trans))
-                 :auto (transition-auto-p trans)))
+                  :conditions (copy-list (transition-conditions trans))
+                  :finalize (copy-list (transition-finalize trans))
+                  :auto (transition-auto-p trans)
+                  :priority (transition-priority trans)))
 
 (defun inherit-states (child parent &key (override t))
   "Copy states from PARENT machine to CHILD machine.

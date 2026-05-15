@@ -277,6 +277,179 @@
     (is (not (may-fire-p m :go)))))
 
 ;;; ---------------------------------------------------------------------------
+;;; Priority / Ordered Transition Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite priority-tests :in cl-transitions-suite)
+(in-suite priority-tests)
+
+(test priority-higher-wins
+  "Test higher priority transition fires before lower priority"
+  (let* ((log nil)
+         (low-trans (make-transition :go :a :b
+                                     :before (list (lambda (e) (declare (ignore e)) (push :low log)))
+                                     :priority 0))
+         (high-trans (make-transition :go :a :c
+                                      :before (list (lambda (e) (declare (ignore e)) (push :high log)))
+                                      :priority 10))
+         (m (make-machine :states '(:a :b :c) :initial :a :transitions nil)))
+    (add-state m :a)
+    (add-state m :b)
+    (add-state m :c)
+    (add-transition m low-trans)
+    (add-transition m high-trans)
+    (fire m :go)
+    (is (eq :c (current-state m)))
+    (is (member :high log))
+    (is (null (member :low log)))))
+
+(test priority-equal-preserves-order
+  "Test equal priority preserves relative order"
+  (let ((m (make-machine :states '(:a :b :c) :initial :a :transitions nil)))
+    (add-state m :a)
+    (add-state m :b)
+    (add-state m :c)
+    ;; Add :a->:c first, then :a->:b, so :a->:b ends up first in the list (due to push)
+    (add-transition m (make-transition :go :a :c))
+    (add-transition m (make-transition :go :a :b))
+    (fire m :go)
+    (is (eq :b (current-state m)))))
+
+(test priority-falls-through-on-condition
+  "Test higher priority failing conditions falls through to lower priority"
+  (let ((cond-val nil)
+        (m (make-machine :states '(:a :b :c) :initial :a :transitions nil)))
+    (add-state m :a)
+    (add-state m :b)
+    (add-state m :c)
+    (add-transition m (make-transition :go :a :b
+                                       :conditions (list (lambda (e) (declare (ignore e)) cond-val))
+                                       :priority 10))
+    (add-transition m (make-transition :go :a :c :priority 0))
+    (is (eq :c (fire m :go)))
+    (is (eq :c (current-state m)))))
+
+(test priority-with-wildcard
+  "Test priority works with wildcard sources"
+  (let ((m (make-machine :states '(:a :b :c :d) :initial :a :transitions nil)))
+    (add-state m :a)
+    (add-state m :b)
+    (add-state m :c)
+    (add-state m :d)
+    (add-transition m (make-transition :go :* :b :priority 0))
+    (add-transition m (make-transition :go :a :c :priority 10))
+    (fire m :go)
+    (is (eq :c (current-state m)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Introspection / Reflection Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite introspection-tests :in cl-transitions-suite)
+(in-suite introspection-tests)
+
+(test find-transitions-no-filters
+  "Test find-transitions returns all transitions with no filters"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)
+                           (:trigger :next :source :b :dest :c)))))
+    (is (= 2 (length (find-transitions m))))))
+
+(test find-transitions-filter-trigger
+  "Test find-transitions filters by trigger"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)
+                           (:trigger :next :source :b :dest :c)))))
+    (is (= 1 (length (find-transitions m :trigger :go))))
+    (is (eq :go (transition-trigger (first (find-transitions m :trigger :go)))))))
+
+(test find-transitions-filter-source
+  "Test find-transitions filters by source"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)
+                           (:trigger :next :source :b :dest :c)))))
+    (is (= 1 (length (find-transitions m :source :b))))
+    (is (eq :next (transition-trigger (first (find-transitions m :source :b)))))))
+
+(test find-transitions-filter-dest
+  "Test find-transitions filters by dest"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)
+                           (:trigger :next :source :b :dest :c)))))
+    (is (= 1 (length (find-transitions m :dest :c))))
+    (is (eq :c (transition-dest (first (find-transitions m :dest :c)))))))
+
+(test find-transitions-combined-filters
+  "Test find-transitions with multiple filters ANDed"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)
+                           (:trigger :go :source :b :dest :c)
+                           (:trigger :next :source :a :dest :c)))))
+    ;; Only :go from :a
+    (is (= 1 (length (find-transitions m :trigger :go :source :a))))
+    (is (eq :b (transition-dest (first (find-transitions m :trigger :go :source :a)))))))
+
+(test find-transitions-no-match
+  "Test find-transitions returns NIL when nothing matches"
+  (let ((m (make-machine
+            :states '(:a :b)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)))))
+    (is (null (find-transitions m :trigger :nonexistent)))))
+
+(test get-triggers-from-current-state
+  "Test get-triggers returns triggers available from current state"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)
+                           (:trigger :skip :source :a :dest :c)
+                           (:trigger :next :source :b :dest :c)))))
+    (is (= 2 (length (get-triggers m))))
+    (is (member :go (get-triggers m)))
+    (is (member :skip (get-triggers m)))))
+
+(test get-triggers-from-specific-state
+  "Test get-triggers returns triggers from specified state"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)
+                           (:trigger :skip :source :a :dest :c)
+                           (:trigger :next :source :b :dest :c)))))
+    ;; From :b, only :next is available
+    (is (= 1 (length (get-triggers m :b))))
+    (is (member :next (get-triggers m :b)))))
+
+(test get-triggers-no-transitions
+  "Test get-triggers returns NIL when no transitions from state"
+  (let ((m (make-machine :states '(:a :b) :initial :a :transitions nil)))
+    (is (null (get-triggers m)))))
+
+(test get-triggers-with-wildcard
+  "Test get-triggers includes triggers with wildcard source"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions '((:trigger :go :source :a :dest :b)
+                           (:trigger :reset :source :* :dest :c)))))
+    ;; From :a, both :go and :reset are available
+    (is (= 2 (length (get-triggers m))))
+    ;; From :b, only :reset (wildcard) is available
+    (is (= 1 (length (get-triggers m :b))))
+    (is (member :reset (get-triggers m :b)))))
+
+;;; ---------------------------------------------------------------------------
 ;;; Callback Tests
 ;;; ---------------------------------------------------------------------------
 

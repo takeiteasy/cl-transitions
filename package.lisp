@@ -19,18 +19,20 @@
    #:state-timeout-trigger
 
    ;; Transition class
-   #:transition
-   #:transition-trigger
-   #:transition-source
-   #:transition-dest
-   #:transition-before
-   #:transition-after
-   #:transition-prepare
-   #:transition-conditions
-   #:transition-finalize
-   #:transition-auto-p
-   #:reflexive-dest-p
-   #:resolve-transition-dest
+    #:transition
+    #:make-transition
+    #:transition-trigger
+    #:transition-source
+    #:transition-dest
+    #:transition-before
+    #:transition-after
+    #:transition-prepare
+    #:transition-conditions
+    #:transition-finalize
+    #:transition-auto-p
+    #:transition-priority
+    #:reflexive-dest-p
+    #:resolve-transition-dest
 
    ;; Event-data class
    #:event-data
@@ -54,11 +56,15 @@
    #:machine-max-auto-transitions
 
    ;; Core protocol
-   #:add-state
-   #:add-transition
-   #:get-state
-   #:current-state
-   #:set-state
+    #:add-state
+    #:add-transition
+    #:get-state
+    #:current-state
+    #:set-state
+
+   ;; Introspection
+    #:find-transitions
+    #:get-triggers
 
    ;; Triggers
    #:fire

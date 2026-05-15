@@ -17,6 +17,8 @@ A finite state machine library for Common Lisp with a clean, expressive API base
 - **Conditions** - Guard predicates to block transitions
 - **Wildcards** - Use `:*` as source to match any state
 - **Reflexive transitions** - Use `:=`, `:same`, or `:internal` as dest for internal transitions
+- **Ordered transitions** - Priority ordering when multiple transitions match
+- **Transition introspection** - Query available triggers and filter transitions
 - **Auto-transitions** - Transitions that fire automatically on state entry
 - **Finalize callbacks** - Always run after transition attempt (like try/finally)
 - **Machine inheritance** - Compose and extend parent machines
@@ -119,6 +121,81 @@ Guard transitions with predicates:
   (may-fire-p m :melt))    ; => NIL
 ```
 
+## Priority / Ordered Transitions
+
+When multiple transitions match the same trigger from the current state, they are evaluated in priority order (highest first). This is especially useful with conditions — you can define a generic fallback with low priority and specific matching rules with higher priority.
+
+```lisp
+(let* ((cond-val nil)
+       (m (make-machine
+           :states '(:a :b :c)
+           :initial :a
+           :transitions (list (list :trigger :go :source :a :dest :b
+                                    :conditions (list (lambda (e)
+                                                        (declare (ignore e))
+                                                        cond-val))
+                                    :priority 10)
+                              (list :trigger :go :source :a :dest :c
+                                    :priority 0)))))
+
+  ;; Higher priority transition fails its condition, falls through to lower priority
+  (fire m :go)           ; => :c
+  (current-state m)      ; => :c
+
+  ;; When condition passes, higher priority wins
+  (setf cond-val t)
+  (set-state m :a)
+  (fire m :go)           ; => :b
+  (current-state m)      ; => :b
+```
+
+```lisp
+;; With define-machine macro
+(define-machine task-manager
+  (:states :idle :active :error)
+  (:initial :idle)
+  (:transitions
+   (:start :idle -> :active)
+   (:fail :active -> :error :priority 10)
+   (:finish :active -> :idle :priority 0)))
+```
+
+Priority defaults to `0`. Higher numeric values are checked first. Transitions with equal priority maintain their relative order (stable sort).
+
+```lisp
+;; Via make-transition
+(make-transition :go :a :b :priority 5)
+```
+
+## Transition Introspection
+
+Query the machine to discover available triggers and transitions at runtime:
+
+```lisp
+(let ((m (make-machine
+          :states '(:idle :processing :done)
+          :initial :idle
+          :transitions '((:trigger :start :source :idle :dest :processing)
+                         (:trigger :finish :source :processing :dest :done)
+                         (:trigger :reset :source :* :dest :idle)))))
+  ;; Get all triggers available from current state
+  (get-triggers m)              ; => (:start)
+
+  ;; Get triggers from a specific state
+  (get-triggers m :processing)  ; => (:finish :reset)
+
+  ;; Find transitions matching criteria
+  (find-transitions m :trigger :reset)              ; => all reset transitions
+  (find-transitions m :source :processing)          ; => all transitions from processing
+  (find-transitions m :dest :idle)                  ; => all transitions to idle
+  (find-transitions m :trigger :start :source :idle) ; => specific transition
+  (find-transitions m)                               ; => all transitions
+```
+
+- `get-triggers` checks structural source matching (including wildcards), not conditions
+- `find-transitions` filters are ANDed — specify multiple to narrow the search
+- With no filters, `find-transitions` returns every transition on the machine
+
 ## Reflexive Transitions
 
 Internal transitions that don't trigger `on-exit`/`on-enter`:
@@ -218,6 +295,11 @@ Timeouts are cancelled when leaving the state early.
 - `(add-transition machine transition)` - Add a transition
 - `(get-state machine name)` - Get state object
 
+### Introspection Functions
+
+- `(get-triggers machine &optional state)` - List trigger symbols available from state (defaults to current)
+- `(find-transitions machine &key trigger source dest)` - Find transitions matching optional filters
+
 ### Inheritance Functions
 
 - `(copy-state state)` - Deep copy a state
@@ -229,8 +311,10 @@ Timeouts are cancelled when leaving the state early.
 - `(cancel-timeout machine)` - Cancel pending timeout
 - `(start-timeout machine state-name duration trigger)` - Start timeout
 
-### Utility Functions
+### Transition Functions
 
+- `(make-transition trigger source dest &key before after prepare conditions finalize auto priority)` - Create a transition
+- `(transition-priority transition)` - Get the priority of a transition
 - `(reflexive-dest-p dest)` - Check if dest is reflexive
 - `(resolve-transition-dest transition current)` - Resolve actual destination
 
@@ -249,11 +333,11 @@ Timeouts are cancelled when leaving the state early.
 - [ ] Hierarchical/Nested FSM - States containing sub-machines (NestedState)
 - [ ] State tags - Grouping states with tags for querying
 - [ ] Dynamic trigger methods - Auto-generated methods on model
-- [ ] Transition reflection - get_transitions(), get_triggers() introspection
+- [x] Transition reflection - get_transitions(), get_triggers() introspection
 - [ ] Graphviz export - Generate state diagrams
 - [x] Finalize callbacks - Always run after transition (even on failure)
 - [x] State machine inheritance - Extending/composing machines
-- [ ] Ordered transitions - Priority when multiple transitions match
+- [x] Ordered transitions - Priority when multiple transitions match
 - [x] Timeout transitions - Auto-fire after duration
 
 ## License

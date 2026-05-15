@@ -34,7 +34,8 @@ SPEC should be a plist with :trigger, :source, :dest, and optional callbacks."
         :prepare (ensure-list (getf spec :prepare))
         :conditions (ensure-list (getf spec :conditions))
         :finalize (ensure-list (getf spec :finalize))
-        :auto (getf spec :auto)))
+        :auto (getf spec :auto)
+        :priority (getf spec :priority 0)))
 
 (defun make-machine (&key states initial transitions model
                        (auto-transitions t)
@@ -95,8 +96,9 @@ Returns the new machine instance."
                                          :after (getf parsed :after)
                                          :prepare (getf parsed :prepare)
                                          :conditions (getf parsed :conditions)
-                                         :finalize (getf parsed :finalize)
-                                         :auto (getf parsed :auto)))))
+                                          :finalize (getf parsed :finalize)
+                                          :auto (getf parsed :auto)
+                                          :priority (getf parsed :priority 0)))))
     ;; Inherit from parent if specified
     (when inherit-from
       (inherit-machine machine inherit-from :override inherit-override))
@@ -185,8 +187,10 @@ Source can be a single state, a list of states, or :* for wildcard."
                              `(:conditions ,(getf options :conditions)))
                          ,@(when (getf options :finalize)
                              `(:finalize ,(getf options :finalize)))
-                         ,@(when (getf options :auto)
-                             `(:auto ,(getf options :auto))))))
+                          ,@(when (getf options :auto)
+                              `(:auto ,(getf options :auto)))
+                          ,@(when (getf options :priority)
+                              `(:priority ,(getf options :priority))))))
               transitions))
           ,@(when model `(:model ,model))
           ,@(when ignore-invalid `(:ignore-invalid-triggers ,ignore-invalid))

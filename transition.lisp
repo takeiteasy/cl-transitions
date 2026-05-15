@@ -40,11 +40,16 @@
              :initform nil
              :type list
              :documentation "Callbacks that always run after transition attempt")
-   (auto :initarg :auto
-         :accessor transition-auto-p
-         :initform nil
-         :type boolean
-         :documentation "If T, this transition fires automatically on state entry"))
+    (auto :initarg :auto
+          :accessor transition-auto-p
+          :initform nil
+          :type boolean
+          :documentation "If T, this transition fires automatically on state entry")
+    (priority :initarg :priority
+              :accessor transition-priority
+              :initform 0
+              :type integer
+              :documentation "Priority for ordering when multiple transitions match. Higher = checked first."))
   (:documentation "Represents a transition between states in the FSM"))
 
 (defmethod print-object ((trans transition) stream)
@@ -60,7 +65,7 @@
         ((listp x) x)
         (t (list x))))
 
-(defun make-transition (trigger source dest &key before after prepare conditions finalize auto)
+(defun make-transition (trigger source dest &key before after prepare conditions finalize auto priority)
   "Create a new transition with the given parameters."
   (make-instance 'transition
                  :trigger trigger
@@ -71,7 +76,8 @@
                  :prepare (ensure-list prepare)
                  :conditions (ensure-list conditions)
                  :finalize (ensure-list finalize)
-                 :auto auto))
+                 :auto auto
+                 :priority (or priority 0)))
 
 (defun transition-matches-source-p (transition current-state)
   "Check if TRANSITION can be triggered from CURRENT-STATE.
