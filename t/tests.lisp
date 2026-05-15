@@ -1028,3 +1028,243 @@
     (sleep 0.6)
     ;; Should still be waiting
     (is (eq :waiting (current-state m)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Dynamic Trigger Method Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite dynamic-trigger-tests :in cl-transitions-suite)
+(in-suite dynamic-trigger-tests)
+
+(defclass dynamic-test-model ()
+  ((data :initarg :data :accessor model-data :initform nil))
+  (:documentation "Test model class for dynamic trigger tests."))
+
+(test dynamic-triggers-basic
+  "Test basic dynamic trigger function"
+  (let* ((model (make-instance 'dynamic-test-model))
+         (machine (make-machine
+                   :states '(:a :b)
+                   :initial :a
+                   :model model
+                   :transitions '((:trigger :go :source :a :dest :b)))))
+    (:go model)
+    (is (eq :b (current-state machine)))
+    (is (eq machine (model-machine model)))))
+
+(test dynamic-triggers-with-args
+  "Test dynamic trigger with extra args"
+  (let* ((captured-args nil)
+         (model (make-instance 'dynamic-test-model))
+         (capture-fn (lambda (e) (setf captured-args (event-args e))))
+         (machine (make-machine
+                   :states '(:a :b)
+                   :initial :a
+                   :model model
+                   :transitions (list (list :trigger :go
+                                           :source :a
+                                           :dest :b
+                                           :after (list capture-fn))))))
+    (:go model :extra-arg 42)
+    (is (equal '(:extra-arg 42) captured-args))))
+
+(test dynamic-triggers-multiple-triggers
+  "Test multiple dynamic trigger functions"
+  (let* ((model (make-instance 'dynamic-test-model))
+         (machine (make-machine
+                   :states '(:solid :liquid :gas)
+                   :initial :solid
+                   :model model
+                   :transitions '((:trigger :melt :source :solid :dest :liquid)
+                                  (:trigger :boil :source :liquid :dest :gas)))))
+    (:melt model)
+    (is (eq :liquid (current-state machine)))
+    (:boil model)
+    (is (eq :gas (current-state machine)))))
+
+(test dynamic-triggers-invalid-trigger
+  "Test firing a registered trigger from wrong state signals error"
+  (let* ((model (make-instance 'dynamic-test-model))
+         (machine (make-machine
+                   :states '(:a :b :c)
+                   :initial :a
+                   :model model
+                   :transitions '((:trigger :go :source :a :dest :b)
+                                  (:trigger :next :source :b :dest :c)))))
+    ;; :next exists but is not valid from :a
+    (signals invalid-trigger-error
+      (:next model))))
+
+(test dynamic-triggers-new-model-no-machine
+  "Test unregistered model with a registered trigger signals invalid-trigger-error"
+  (let* ((model-a (make-instance 'dynamic-test-model))
+         (model-b (make-instance 'dynamic-test-model)))
+    ;; Register :go on model-a
+    (make-machine :states '(:a :b)
+                  :initial :a
+                  :model model-a
+                  :transitions '((:trigger :go :source :a :dest :b)))
+    ;; Calling :go on model-b should fail - it's not registered
+    (signals invalid-trigger-error
+      (:go model-b))))
+
+;;; ---------------------------------------------------------------------------
+;;; State Tag Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite state-tag-tests :in cl-transitions-suite)
+(in-suite state-tag-tests)
+
+(test state-tags-basic
+  "Test state has tags slot"
+  (let ((state (cl-transitions::make-state :solid :tags '(:matter :element))))
+    (is (equal '(:matter :element) (state-tags state)))))
+
+(test state-tags-no-tags
+  "Test state with no tags returns nil"
+  (let ((state (cl-transitions::make-state :solid)))
+    (is (null (state-tags state)))))
+
+(test get-states-by-tag-basic
+  "Test finding states by tag"
+  (let ((m (make-machine
+            :states (list (list :name :solid :tags '(:matter))
+                          (list :name :liquid :tags '(:matter))
+                          (list :name :gas :tags '(:matter))
+                          (list :name :start :tags '(:control)))
+            :initial :solid
+            :transitions nil)))
+    (let ((matter-states (get-states-by-tag m :matter)))
+      (is (= 3 (length matter-states)))
+      (is (every (lambda (s) (member (state-name s) '(:solid :liquid :gas))) matter-states)))
+    (let ((control-states (get-states-by-tag m :control)))
+      (is (= 1 (length control-states)))
+      (is (eq :start (state-name (first control-states)))))
+    (let ((nonexistent (get-states-by-tag m :nonexistent)))
+      (is (null nonexistent)))))
+
+(test get-states-by-tag-inheritance
+  "Test tags are inherited correctly"
+  (let* ((parent (make-machine
+                  :states (list (list :name :a :tags '(:parent-tag))
+                                :b)
+                  :initial :a
+                  :transitions nil))
+         (child (make-machine
+                 :states (list (list :name :c :tags '(:child-tag)))
+                 :initial :a
+                 :transitions nil
+                 :inherit-from parent)))
+    (let ((parent-tag-states (get-states-by-tag child :parent-tag)))
+      (is (= 1 (length parent-tag-states)))
+      (is (eq :a (state-name (first parent-tag-states)))))))
+
+(test state-tags-using-symbol-spec
+  "Test states defined as symbols have no tags"
+  (let ((m (make-machine
+            :states '(:a :b :c)
+            :initial :a
+            :transitions nil)))
+    (is (null (get-states-by-tag m :anything)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Nested State Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite nested-state-tests :in cl-transitions-suite)
+(in-suite nested-state-tests)
+
+(test nested-state-basic
+  "Test basic nested state: entering a state with a submachine starts it"
+  (let* ((sub (make-machine :states '(:sub-a :sub-b)
+                            :initial :sub-a
+                            :transitions '((:trigger :sub-go :source :sub-a :dest :sub-b))))
+         (parent (make-machine
+                  :states (list (list :name :operating :submachine sub)
+                                :stopped)
+                  :initial :operating
+                  :transitions '((:trigger :shutdown :source :operating :dest :stopped)))))
+    ;; Parent is in :operating, submachine should be at :sub-a
+    (is (eq :operating (current-state parent)))
+    (is (eq :sub-a (current-state sub)))
+    ;; Submachine processes its own events
+    (fire sub :sub-go)
+    (is (eq :sub-b (current-state sub)))
+    ;; Parent can still transition away
+    (fire parent :shutdown)
+    (is (eq :stopped (current-state parent)))))
+
+(test nested-state-submachine-initialized-on-start
+  "Test submachine is initialized on machine start if initial state is nested"
+  (let* ((sub (make-machine :states '(:sub-a :sub-b)
+                            :initial :sub-a
+                            :transitions '((:trigger :sub-go :source :sub-a :dest :sub-b))))
+         (parent (make-machine
+                  :states (list (list :name :nested :submachine sub)
+                                :simple)
+                  :initial :nested
+                  :transitions '((:trigger :go :source :nested :dest :simple)))))
+    ;; Parent starts in nested state, submachine initialized to :sub-a
+    (is (eq :nested (current-state parent)))
+    (is (eq :sub-a (current-state sub)))
+    ;; Submachine processes its own events
+    (fire sub :sub-go)
+    (is (eq :sub-b (current-state sub)))
+    ;; Exiting parent stops submachine (timeout cancelled)
+    (fire parent :go)
+    (is (eq :simple (current-state parent)))))
+
+(test nested-state-callbacks-on-transition-entry
+  "Test on-enter/on-exit callbacks and submachine are triggered on transition"
+  (let* ((enter-log nil)
+         (exit-log nil)
+         (sub (make-machine :states '(:sub-a)
+                            :initial :sub-a
+                            :transitions nil))
+         (parent (make-machine
+                  :states (list (list :name :start)
+                                (list :name :nested :submachine sub
+                                      :on-enter (list (lambda (e) (declare (ignore e))
+                                                       (push :enter enter-log)))
+                                      :on-exit (list (lambda (e) (declare (ignore e))
+                                                       (push :exit exit-log))))
+                                :simple)
+                  :initial :start
+                  :transitions '((:trigger :enter-nested :source :start :dest :nested)
+                                 (:trigger :go :source :nested :dest :simple)))))
+    ;; Parent starts in :start, submachine not yet active
+    (is (eq :start (current-state parent)))
+    ;; Transition enters nested state — triggers on-enter and starts submachine
+    (fire parent :enter-nested)
+    (is (eq :nested (current-state parent)))
+    (is (member :enter enter-log))
+    (is (eq :sub-a (current-state sub)))
+    ;; Transition exits nested state — triggers on-exit
+    (fire parent :go)
+    (is (member :exit exit-log))
+    (is (eq :simple (current-state parent)))))
+
+(test nested-state-transition-independence
+  "Test parent and submachine transitions work independently"
+  (let* ((parent-log nil)
+         (sub (make-machine :states '(:idle :busy)
+                            :initial :idle
+                            :transitions '((:trigger :work :source :idle :dest :busy))))
+         (parent (make-machine
+                  :states (list (list :name :active :submachine sub)
+                                :standby)
+                  :initial :active
+                  :transitions (list (list :trigger :standby :source :active :dest :standby
+                                           :after (list (lambda (e) (declare (ignore e))
+                                                         (push :standby parent-log))))))))
+    ;; Submachine starts in :idle
+    (is (eq :idle (current-state sub)))
+    ;; Fire submachine trigger
+    (fire sub :work)
+    (is (eq :busy (current-state sub)))
+    ;; Parent is still in :active
+    (is (eq :active (current-state parent)))
+    ;; Fire parent trigger
+    (fire parent :standby)
+    (is (member :standby parent-log))
+    (is (eq :standby (current-state parent)))))

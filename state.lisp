@@ -7,6 +7,16 @@
          :accessor state-name
          :type symbol
          :documentation "The symbolic name of this state")
+   (tags :initarg :tags
+         :accessor state-tags
+         :initform nil
+         :type list
+         :documentation "List of tag symbols for grouping/states querying")
+   (submachine :initarg :submachine
+               :accessor state-submachine
+               :initform nil
+               :type (or machine null)
+               :documentation "Optional sub-machine for nested/hierarchical states")
    (on-enter :initarg :on-enter
              :accessor state-on-enter
              :initform nil
@@ -32,11 +42,15 @@
   (print-unreadable-object (state stream :type t :identity t)
     (format stream "~S" (state-name state))))
 
-(defun make-state (name &key on-enter on-exit timeout timeout-trigger)
+(defun make-state (name &key on-enter on-exit timeout timeout-trigger tags submachine)
   "Create a new state with the given name and optional callbacks.
-TIMEOUT is the duration in seconds before TIMEOUT-TRIGGER is fired."
+TIMEOUT is the duration in seconds before TIMEOUT-TRIGGER is fired.
+TAGS is a list of tag symbols for grouping and querying states.
+SUBMACHINE is an optional machine instance for hierarchical/nested states."
   (make-instance 'state
                  :name name
+                 :tags tags
+                 :submachine submachine
                  :on-enter (if (listp on-enter) on-enter (list on-enter))
                  :on-exit (if (listp on-exit) on-exit (list on-exit))
                  :timeout timeout

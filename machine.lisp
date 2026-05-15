@@ -63,9 +63,12 @@
   (print-unreadable-object (machine stream :type t :identity t)
     (format stream "state: ~S" (machine-current-state machine))))
 
-(defun add-state (machine state-or-name &key on-enter on-exit timeout timeout-trigger)
+(defun add-state (machine state-or-name &key on-enter on-exit timeout timeout-trigger
+                            tags submachine)
   "Add a state to the machine.
 STATE-OR-NAME can be a state object or a symbol (state name).
+TAGS is a list of tag symbols for grouping and querying states.
+SUBMACHINE is an optional machine instance for nested/hierarchical states.
 Returns the state object."
   (let ((state (etypecase state-or-name
                  (state state-or-name)
@@ -73,7 +76,9 @@ Returns the state object."
                                      :on-enter on-enter
                                      :on-exit on-exit
                                      :timeout timeout
-                                     :timeout-trigger timeout-trigger)))))
+                                     :timeout-trigger timeout-trigger
+                                     :tags tags
+                                     :submachine submachine)))))
     (setf (gethash (state-name state) (machine-states machine)) state)
     state))
 
@@ -138,15 +143,30 @@ Returns a list of unique trigger symbols."
                               (transition-matches-source-p trans state))
                             (machine-transitions machine))))))
 
+(defun get-states-by-tag (machine tag)
+  "Find all states in MACHINE that have the given TAG.
+TAG is a symbol used for grouping states.
+Returns a list of state objects (not just names)."
+  (let ((result nil))
+    (maphash (lambda (name state)
+               (declare (ignore name))
+               (when (member tag (state-tags state))
+                 (push state result)))
+             (machine-states machine))
+    (nreverse result)))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Machine Inheritance
 ;;; ---------------------------------------------------------------------------
 
 (defun copy-state (state)
   "Create a deep copy of STATE.
-Callbacks are copied by reference (they are assumed to be functions)."
+Callbacks are copied by reference (they are assumed to be functions).
+The submachine is copied by reference (not deep-copied)."
   (make-instance 'state
                  :name (state-name state)
+                 :tags (copy-list (state-tags state))
+                 :submachine (state-submachine state)
                  :on-enter (copy-list (state-on-enter state))
                  :on-exit (copy-list (state-on-exit state))
                  :timeout (state-timeout state)

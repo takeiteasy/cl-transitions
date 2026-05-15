@@ -23,6 +23,9 @@ A finite state machine library for Common Lisp with a clean, expressive API base
 - **Finalize callbacks** - Always run after transition attempt (like try/finally)
 - **Machine inheritance** - Compose and extend parent machines
 - **Timeout transitions** - Auto-fire after specified duration in a state
+- **Dynamic trigger methods** - Auto-generated trigger functions on model objects
+- **State tags** - Group and query states by tags
+- **Nested states** - States containing sub-machines for hierarchical FSM design
 
 ## Quick Start
 
@@ -263,6 +266,93 @@ Compose machines by inheriting from parent:
   (fire child :finish)) ; => :done (child's own)
 ```
 
+## Dynamic Trigger Methods
+
+When a machine is created with a `:model`, each trigger is automatically available as a function named by the trigger symbol, taking the model as the first argument:
+
+```lisp
+;; Define a model class
+(defclass matter () ())
+
+(let* ((model (make-instance 'matter))
+       (machine (make-machine
+                 :states '(:solid :liquid :gas)
+                 :initial :solid
+                 :model model
+                 :transitions '((:trigger :melt :source :solid :dest :liquid)
+                                (:trigger :boil :source :liquid :dest :gas)))))
+  ;; Call triggers directly on the model
+  (:melt model)        ; instead of (fire machine :melt)
+  (current-state machine)  ; => :liquid
+  (:boil model)
+  (current-state machine)) ; => :gas
+```
+
+The machine is still accessible via `(model-machine model)`. Trigger functions support extra arguments which are passed through to transition callbacks.
+
+```lisp
+(model-machine model)  ; => the machine instance
+```
+
+> **Note:** Dynamic triggers use the same symbol as the trigger keyword (e.g., `:melt`). Calling a trigger on an unregistered model signals an `invalid-trigger-error`.
+
+## State Tags
+
+Group states with tags and query them at runtime:
+
+```lisp
+(let ((m (make-machine
+          :states (list (list :name :solid  :tags '(:matter))
+                        (list :name :liquid :tags '(:matter))
+                        (list :name :gas    :tags '(:matter))
+                        (list :name :start  :tags '(:control)))
+          :initial :solid
+          :transitions nil)))
+  ;; Find all states tagged :matter
+  (get-states-by-tag m :matter))  ; => list of state objects
+  (mapcar #'state-name (get-states-by-tag m :matter))  ; => (:solid :liquid :gas)
+
+  ;; Find states with :control tag
+  (mapcar #'state-name (get-states-by-tag m :control))  ; => (:start)
+
+  ;; Tags are inherited by child machines
+```
+
+- Use a plist state spec with `:tags` to tag states
+- States defined as bare symbols have no tags
+- `get-states-by-tag` returns state objects; use `state-name` to get the symbol
+
+## Nested States
+
+States can contain sub-machines for hierarchical FSM design. When entering a nested state, its sub-machine is automatically initialized. When exiting, the sub-machine is stopped.
+
+```lisp
+(let* ((sub (make-machine
+             :states '(:idle :processing)
+             :initial :idle
+             :transitions '((:trigger :start-work :source :idle :dest :processing))))
+       (machine (make-machine
+                 :states (list (list :name :operating :submachine sub)
+                               :stopped)
+                 :initial :operating
+                 :transitions '((:trigger :shutdown :source :operating :dest :stopped)))))
+  ;; Sub-machine starts in :idle
+  (current-state sub)  ; => :idle
+
+  ;; Sub-machine processes its own events
+  (fire sub :start-work)
+  (current-state sub)  ; => :processing
+
+  ;; Parent transitions out — sub-machine is stopped
+  (fire machine :shutdown)
+  (current-state machine)  ; => :stopped
+)
+```
+
+Use `(state-submachine state)` to access the sub-machine from a state object. The sub-machine's callbacks and timeouts work independently.
+
+> **Note:** The `:submachine` key is not supported in `define-machine`'s quoted syntax — use `make-machine` directly for nested states.
+
 ## Timeout Transitions
 
 States can auto-transition after a duration:
@@ -291,14 +381,21 @@ Timeouts are cancelled when leaving the state early.
 - `(may-fire-p machine trigger)` - Check if trigger can fire
 - `(current-state machine)` - Get current state symbol
 - `(set-state machine state-name)` - Directly set state
-- `(add-state machine name &key on-enter on-exit ...)` - Add a state
+- `(add-state machine name &key on-enter on-exit tags submachine ...)` - Add a state
 - `(add-transition machine transition)` - Add a transition
 - `(get-state machine name)` - Get state object
+
+### Dynamic Trigger Functions
+
+- `(model-machine model)` - Get the machine associated with a model
+- `(collect-triggers machine)` - List all unique trigger symbols
+- `(add-dynamic-triggers machine)` - Set up trigger functions for the machine's model
 
 ### Introspection Functions
 
 - `(get-triggers machine &optional state)` - List trigger symbols available from state (defaults to current)
 - `(find-transitions machine &key trigger source dest)` - Find transitions matching optional filters
+- `(get-states-by-tag machine tag)` - Find all state objects with a given tag symbol
 
 ### Inheritance Functions
 
@@ -330,9 +427,9 @@ Timeouts are cancelled when leaving the state early.
 - [x] Auto-transitions - Transitions that fire automatically when entering a state
 - [x] Reflexive transitions - dest: '=' to stay in same state (internal transitions)
 - [ ] Queued/Async mode - Queue triggers during transition execution, process sequentially
-- [ ] Hierarchical/Nested FSM - States containing sub-machines (NestedState)
-- [ ] State tags - Grouping states with tags for querying
-- [ ] Dynamic trigger methods - Auto-generated methods on model
+- [x] Hierarchical/Nested FSM - States containing sub-machines (NestedState)
+- [x] State tags - Grouping states with tags for querying
+- [x] Dynamic trigger methods - Auto-generated trigger functions on model objects
 - [x] Transition reflection - get_transitions(), get_triggers() introspection
 - [ ] Graphviz export - Generate state diagrams
 - [x] Finalize callbacks - Always run after transition (even on failure)

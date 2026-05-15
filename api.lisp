@@ -3,25 +3,30 @@
 (in-package #:cl-transitions)
 
 (defun parse-state-spec (spec)
-  "Parse a state specification into (name on-enter on-exit timeout timeout-trigger).
+  "Parse a state specification into (name on-enter on-exit timeout timeout-trigger tags submachine).
 SPEC can be:
-  - A symbol: (:solid) -> (:solid nil nil nil nil)
-  - A plist: (:name :solid :on-enter (fn) :timeout 5 :timeout-trigger :expire)"
+  - A symbol: :solid -> (solid nil nil nil nil nil nil)
+  - A plist: (:name :solid :on-enter (fn) :timeout 5 :timeout-trigger :expire :tags (:a :b)
+              :submachine sub-machine-instance)"
   (etypecase spec
-    (symbol (list spec nil nil nil nil))
+    (symbol (list spec nil nil nil nil nil nil))
     (list (if (keywordp (first spec))
               ;; Plist form: (:name :solid :on-enter ...)
               (list (getf spec :name)
                     (ensure-list (getf spec :on-enter))
                     (ensure-list (getf spec :on-exit))
                     (getf spec :timeout)
-                    (getf spec :timeout-trigger))
+                    (getf spec :timeout-trigger)
+                    (getf spec :tags)
+                    (getf spec :submachine))
               ;; Could also be a list starting with name
               (list (first spec)
                     (ensure-list (getf (rest spec) :on-enter))
                     (ensure-list (getf (rest spec) :on-exit))
                     (getf (rest spec) :timeout)
-                    (getf (rest spec) :timeout-trigger))))))
+                    (getf (rest spec) :timeout-trigger)
+                    (getf (rest spec) :tags)
+                    (getf (rest spec) :submachine))))))
 
 (defun parse-transition-spec (spec)
   "Parse a transition specification into a property list.
@@ -78,13 +83,15 @@ Returns the new machine instance."
                                 :max-auto-transitions max-auto-transitions)))
     ;; Add states
     (dolist (state-spec states)
-      (destructuring-bind (name on-enter on-exit timeout timeout-trigger)
+      (destructuring-bind (name on-enter on-exit timeout timeout-trigger tags submachine)
           (parse-state-spec state-spec)
         (add-state machine name
                    :on-enter on-enter
                    :on-exit on-exit
                    :timeout timeout
-                   :timeout-trigger timeout-trigger)))
+                   :timeout-trigger timeout-trigger
+                   :tags tags
+                   :submachine submachine)))
     ;; Add transitions
     (dolist (trans-spec transitions)
       (let ((parsed (parse-transition-spec trans-spec)))
@@ -104,7 +111,14 @@ Returns the new machine instance."
       (inherit-machine machine inherit-from :override inherit-override))
     ;; Set up timeout for initial state
     (when initial
+      ;; Initialize submachine for initial state if present
+      (let ((state (get-state machine initial)))
+        (when state
+          (enter-submachine state)))
       (setup-state-timeout machine initial))
+    ;; Set up dynamic trigger methods if model is provided
+    (when model
+      (add-dynamic-triggers machine))
     machine))
 
 (defun arrow-symbol-p (sym)

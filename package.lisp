@@ -13,6 +13,8 @@
    ;; State class
    #:state
    #:state-name
+   #:state-tags
+   #:state-submachine
    #:state-on-enter
    #:state-on-exit
    #:state-timeout
@@ -65,10 +67,14 @@
    ;; Introspection
     #:find-transitions
     #:get-triggers
+    #:get-states-by-tag
 
    ;; Triggers
    #:fire
    #:may-fire-p
+   #:model-machine
+   #:collect-triggers
+   #:add-dynamic-triggers
 
    ;; High-level API
    #:make-machine
