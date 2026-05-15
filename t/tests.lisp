@@ -1268,3 +1268,132 @@
     (fire parent :standby)
     (is (member :standby parent-log))
     (is (eq :standby (current-state parent)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Queued Mode Tests
+;;; ---------------------------------------------------------------------------
+
+(def-suite queued-mode-tests :in cl-transitions-suite)
+(in-suite queued-mode-tests)
+
+(test queued-mode-disabled-by-default
+  "Test queued mode is disabled by default"
+  (let ((m (make-machine :states '(:a :b)
+                         :initial :a
+                         :transitions nil)))
+    (is (null (machine-queued-p m)))))
+
+(test queued-mode-queues-trigger-during-transition
+  "Test triggers fired from callbacks are queued in queued mode"
+  (let* ((call-order nil)
+         (callback (lambda (e)
+                     (declare (ignore e))
+                     (push :callback-called call-order)))
+         (second-callback (lambda (e)
+                            (declare (ignore e))
+                            (push :second-callback call-order)))
+         (m (make-machine
+             :states (list (list :name :a :on-exit (list callback))
+                           :b :c)
+             :initial :a
+             :queued t
+             :transitions (list (list :trigger :go :source :a :dest :b
+                                      :after (list (lambda (e)
+                                                     ;; Reference machine via event-data
+                                                     (fire (event-machine e) :go2))))
+                                (list :trigger :go2 :source :b :dest :c
+                                      :after (list second-callback))))))
+    (fire m :go)
+    ;; Should have transitioned through go->go2 to :c
+    (is (eq :c (current-state m)))))
+
+(test queued-mode-order-preserved
+  "Test queued triggers are processed in FIFO order"
+  (let* ((execution-order nil)
+         (mk-callback (lambda (name)
+                        (lambda (e)
+                          (declare (ignore e))
+                          (push name execution-order))))
+         (m (make-machine
+             :states '(:a :b :c :d)
+             :initial :a
+             :queued t
+             :transitions (list (list :trigger :start :source :a :dest :b
+                                      :after (list (lambda (e)
+                                                     ;; Reference machine via event-data
+                                                     (let ((m (event-machine e)))
+                                                       (fire m :next)
+                                                       (fire m :jump)))))
+                                (list :trigger :next :source :b :dest :c
+                                      :after (list (funcall mk-callback :next-executed)))
+                                (list :trigger :jump :source :c :dest :d
+                                      :after (list (funcall mk-callback :jump-executed)))))))
+    (fire m :start)
+    (is (eq :d (current-state m)))
+    ;; :next should execute before :jump (FIFO order)
+    ;; Both after callbacks should have executed
+    (is (member :next-executed execution-order))
+    (is (member :jump-executed execution-order))))
+
+(test queued-mode-does-not-queue-when-not-processing
+  "Test triggers fire normally when not inside a transition"
+  (let* ((call-log nil)
+         (callback (lambda (e)
+                     (declare (ignore e))
+                     (push :after-call call-log)))
+         (m (make-machine
+             :states '(:a :b :c)
+             :initial :a
+             :queued t
+             :transitions (list (list :trigger :go :source :a :dest :b
+                                      :after (list callback))
+                                (list :trigger :next :source :b :dest :c)))))
+    ;; Both triggers fire immediately (not queued between calls)
+    (fire m :go)
+    (is (eq :b (current-state m)))
+    (is (member :after-call call-log))
+    (fire m :next)
+    (is (eq :c (current-state m)))))
+
+(test queued-mode-nested-callbacks
+  "Test nested callbacks that fire triggers all get queued"
+  (let* ((call-log nil)
+         (m (make-machine
+             :states '(:a :b :c :d)
+             :initial :a
+             :queued t
+             :transitions (list (list :trigger :go :source :a :dest :b
+                                      :after (list (lambda (e)
+                                                     (declare (ignore e))
+                                                     (push :after-go call-log)
+                                                     (fire (event-machine e) :next))))
+                                (list :trigger :next :source :b :dest :c
+                                      :after (list (lambda (e)
+                                                     (declare (ignore e))
+                                                     (push :after-next call-log)
+                                                     (fire (event-machine e) :final))))
+                                (list :trigger :final :source :c :dest :d
+                                      :after (list (lambda (e)
+                                                     (declare (ignore e))
+                                                     (push :after-final call-log))))))))
+    (fire m :go)
+    (is (eq :d (current-state m)))
+    (is (member :after-go call-log))
+    (is (member :after-next call-log))
+    (is (member :after-final call-log))))
+
+(test queued-mode-non-queued-fires-immediately
+  "Test non-queued machine fires triggers immediately even from callbacks"
+  (let* ((m (make-machine
+             :states '(:a :b :c)
+             :initial :a
+             :queued nil
+             :transitions (list (list :trigger :go :source :a :dest :b
+                                      :after (list (lambda (e)
+                                                     ;; In non-queued mode, this fires immediately
+                                                     (fire (event-machine e) :next))))
+                                (list :trigger :next :source :b :dest :c)))))
+    ;; Without queued mode, the :next fires during the :go transition
+    (fire m :go)
+    (is (eq :c (current-state m)))))
+

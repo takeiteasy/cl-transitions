@@ -46,6 +46,7 @@ SPEC should be a plist with :trigger, :source, :dest, and optional callbacks."
                        (auto-transitions t)
                        (ignore-invalid-triggers nil)
                        (max-auto-transitions 10)
+                       (queued nil)
                        inherit-from
                        (inherit-override t))
   "Create a new state machine.
@@ -69,6 +70,10 @@ instead of signaling an error.
 
 MAX-AUTO-TRANSITIONS (default 10) maximum auto-transition chain depth.
 
+QUEUED (default NIL) if T, triggers fired during transition processing are
+queued and processed sequentially after the current transition completes.
+This prevents re-entrant trigger execution from callbacks.
+
 INHERIT-FROM if provided, inherits states and transitions from this parent machine.
 
 INHERIT-OVERRIDE (default T) if T, child definitions override parent definitions.
@@ -80,7 +85,8 @@ Returns the new machine instance."
                                 :current-state initial
                                 :auto-transitions auto-transitions
                                 :ignore-invalid-triggers ignore-invalid-triggers
-                                :max-auto-transitions max-auto-transitions)))
+                                :max-auto-transitions max-auto-transitions
+                                :queued queued)))
     ;; Add states
     (dolist (state-spec states)
       (destructuring-bind (name on-enter on-exit timeout timeout-trigger tags submachine)
@@ -171,6 +177,7 @@ Source can be a single state, a list of states, or :* for wildcard."
           (transitions (rest transitions-clause))
           (model (second model-clause))
           (ignore-invalid (getf (rest options-clause) :ignore-invalid-triggers))
+          (queued (getf (rest options-clause) :queued))
           (inherit-from (second inherit-clause))
           (inherit-override (if inherit-clause
                                 (getf (cddr inherit-clause) :override t)
@@ -208,5 +215,6 @@ Source can be a single state, a list of states, or :* for wildcard."
               transitions))
           ,@(when model `(:model ,model))
           ,@(when ignore-invalid `(:ignore-invalid-triggers ,ignore-invalid))
+          ,@(when queued `(:queued ,queued))
           ,@(when inherit-from `(:inherit-from ,inherit-from))
           ,@(when inherit-clause `(:inherit-override ,inherit-override)))))))

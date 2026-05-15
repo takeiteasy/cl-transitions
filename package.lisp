@@ -56,6 +56,9 @@
    #:machine-auto-transitions
    #:machine-ignore-invalid-triggers
    #:machine-max-auto-transitions
+   #:machine-queued-p
+   #:machine-processing-p
+   #:machine-processing-queue
 
    ;; Core protocol
     #:add-state
@@ -75,6 +78,7 @@
    #:model-machine
    #:collect-triggers
    #:add-dynamic-triggers
+   #:drain-queued-triggers
 
    ;; High-level API
    #:make-machine

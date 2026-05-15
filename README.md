@@ -26,6 +26,7 @@ A finite state machine library for Common Lisp with a clean, expressive API base
 - **Dynamic trigger methods** - Auto-generated trigger functions on model objects
 - **State tags** - Group and query states by tags
 - **Nested states** - States containing sub-machines for hierarchical FSM design
+- **Queued mode** - Queue triggers fired during transitions to prevent re-entrancy
 
 ## Quick Start
 
@@ -353,6 +354,39 @@ Use `(state-submachine state)` to access the sub-machine from a state object. Th
 
 > **Note:** The `:submachine` key is not supported in `define-machine`'s quoted syntax — use `make-machine` directly for nested states.
 
+## Queued Mode
+
+By default, triggers fired from within callbacks execute immediately (re-entrantly). This can cause unexpected state changes. Enable **queued mode** to defer triggers fired during transitions, processing them sequentially after the current transition completes.
+
+```lisp
+(let ((m (make-machine
+          :states '(:a :b :c)
+          :initial :a
+          :queued t                     ; Enable queued mode
+          :transitions (list
+                        (list :trigger :go :source :a :dest :b
+                              :after (list (lambda (e)
+                                             ;; :next is queued, not executed yet
+                                             (fire (event-machine e) :next))))
+                        (list :trigger :next :source :b :dest :c)))))
+  ;; Without queued: would end in :c (re-entrant :next fires immediately)
+  ;; With queued: ends in :b (:next is queued, but state has already changed
+  ;; to :b when :after runs — :next then fires from :b)
+  (fire m :go))  ; => :b (not :c)
+```
+
+Queued mode ensures each transition runs to completion before the next starts. The queue is drained in FIFO order, and new triggers queued during drain are also processed.
+
+```lisp
+;; Access queue internals
+(drain-queued-triggers m)          ; Manually drain pending queue
+(machine-queued-p m)               ; Check if queued mode is enabled
+(machine-processing-p m)           ; Check if currently processing
+(machine-processing-queue m)       ; Inspect the pending queue
+```
+
+Queued mode requires no external dependencies — it uses a simple list and boolean flag.
+
 ## Timeout Transitions
 
 States can auto-transition after a duration:
@@ -376,7 +410,7 @@ Timeouts are cancelled when leaving the state early.
 
 ### Machine Functions
 
-- `(make-machine &key states initial transitions model ...)` - Create a machine
+- `(make-machine &key states initial transitions model queued ...)` - Create a machine
 - `(fire machine trigger &rest args)` - Fire a trigger
 - `(may-fire-p machine trigger)` - Check if trigger can fire
 - `(current-state machine)` - Get current state symbol
@@ -384,6 +418,13 @@ Timeouts are cancelled when leaving the state early.
 - `(add-state machine name &key on-enter on-exit tags submachine ...)` - Add a state
 - `(add-transition machine transition)` - Add a transition
 - `(get-state machine name)` - Get state object
+
+### Queued Mode Functions
+
+- `(machine-queued-p machine)` - Check if queued mode is enabled
+- `(machine-processing-p machine)` - Check if a transition is currently being processed
+- `(machine-processing-queue machine)` - Inspect the queue of pending triggers
+- `(drain-queued-triggers machine)` - Manually drain all queued triggers
 
 ### Dynamic Trigger Functions
 
@@ -426,7 +467,7 @@ Timeouts are cancelled when leaving the state early.
 
 - [x] Auto-transitions - Transitions that fire automatically when entering a state
 - [x] Reflexive transitions - dest: '=' to stay in same state (internal transitions)
-- [ ] Queued/Async mode - Queue triggers during transition execution, process sequentially
+- [x] Queued/Async mode - Queue triggers during transition execution, process sequentially
 - [x] Hierarchical/Nested FSM - States containing sub-machines (NestedState)
 - [x] State tags - Grouping states with tags for querying
 - [x] Dynamic trigger methods - Auto-generated trigger functions on model objects

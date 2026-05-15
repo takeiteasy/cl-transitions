@@ -52,11 +52,26 @@
                  :accessor machine-timeout-lock
                  :initform (bt:make-lock "timeout-lock")
                  :documentation "Lock for thread-safe timeout operations")
-   (timeout-cancelled :initarg :timeout-cancelled
-                      :accessor machine-timeout-cancelled
-                      :initform nil
-                      :type boolean
-                      :documentation "Flag to signal timeout thread should abort"))
+    (timeout-cancelled :initarg :timeout-cancelled
+                       :accessor machine-timeout-cancelled
+                       :initform nil
+                       :type boolean
+                       :documentation "Flag to signal timeout thread should abort")
+   (queued :initarg :queued
+           :accessor machine-queued-p
+           :initform nil
+           :type boolean
+           :documentation "If T, triggers fired during transition processing are queued and processed sequentially after the current transition completes")
+   (processing-p :initarg :processing-p
+                 :accessor machine-processing-p
+                 :initform nil
+                 :type boolean
+                 :documentation "If T, a transition is currently being processed")
+   (processing-queue :initarg :processing-queue
+                     :accessor machine-processing-queue
+                     :initform nil
+                     :type list
+                     :documentation "Queue of pending (trigger . args) for queued mode"))
   (:documentation "The finite state machine controller"))
 
 (defmethod print-object ((machine machine) stream)

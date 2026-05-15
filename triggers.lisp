@@ -105,32 +105,74 @@ Returns the new state on success, or NIL if conditions fail."
       (invoke-finalize-callbacks (transition-finalize transition) event-data))
     result))
 
+(defun fire-direct (machine trigger args)
+  "Fire a trigger without queue management. Used internally during queue drain.
+Invalid triggers are silently ignored."
+  (let ((transitions (find-transitions-for-trigger machine trigger)))
+    (when transitions
+      (dolist (trans transitions)
+        (let ((result (apply #'execute-transition machine trans args)))
+          (when result
+            (return result)))))))
+
+(defun drain-queued-triggers (machine)
+  "Process all queued triggers in FIFO order.
+New triggers queued during drain (e.g. from callbacks) are also processed.
+Invalid triggers during drain are silently ignored."
+  (loop while (machine-processing-queue machine)
+        do (let* ((entry (pop (machine-processing-queue machine)))
+                  (trigger (car entry))
+                  (args (cdr entry)))
+             (fire-direct machine trigger args))))
+             
 (defun fire (machine trigger &rest args)
   "Fire a trigger on the machine.
 Returns the new state on success.
 If the trigger is invalid and IGNORE-INVALID-TRIGGERS is NIL, signals INVALID-TRIGGER-ERROR.
 If IGNORE-INVALID-TRIGGERS is T, returns NIL for invalid triggers.
-If conditions block the transition, returns NIL."
-  (let ((transitions (find-transitions-for-trigger machine trigger)))
-    (cond
-      ;; No valid transitions found
-      ((null transitions)
-       (if (machine-ignore-invalid-triggers machine)
-           nil
-           (error 'invalid-trigger-error
-                  :machine machine
-                  :trigger trigger
-                  :current-state (machine-current-state machine)
-                  :message (format nil "No transition for trigger ~A from state ~A"
-                                   trigger (machine-current-state machine)))))
-      ;; Try each matching transition until one succeeds
-      (t
-       (dolist (trans transitions)
-         (let ((result (apply #'execute-transition machine trans args)))
-           (when result
-             (return-from fire result))))
-       ;; All transitions had failing conditions
-       nil))))
+If conditions block the transition, returns NIL.
+
+When QUEUED mode is enabled (see make-machine :queued), triggers fired during
+transition processing are queued and processed sequentially after the current
+transition completes. This prevents re-entrant trigger execution from callbacks."
+  ;; Queued mode: if already processing, queue the trigger and return
+  (when (and (machine-queued-p machine)
+             (machine-processing-p machine))
+    (setf (machine-processing-queue machine)
+          (nconc (machine-processing-queue machine)
+                 (list (cons trigger args))))
+    (return-from fire nil))
+
+  ;; Track whether we're entering a new processing session
+  (let ((was-processing (machine-processing-p machine))
+        (result nil))
+    (unless was-processing
+      (setf (machine-processing-p machine) t))
+    (unwind-protect
+         (block fire-body
+           (let ((transitions (find-transitions-for-trigger machine trigger)))
+             (cond
+               ((null transitions)
+                (if (machine-ignore-invalid-triggers machine)
+                    (setf result nil)
+                    (error 'invalid-trigger-error
+                           :machine machine
+                           :trigger trigger
+                           :current-state (machine-current-state machine)
+                           :message (format nil "No transition for trigger ~A from state ~A"
+                                            trigger (machine-current-state machine)))))
+               (t
+                (dolist (trans transitions)
+                  (let ((r (apply #'execute-transition machine trans args)))
+                    (when r
+                      (setf result r)
+                      (return-from fire-body))))
+                (setf result nil)))))
+      ;; Unwind: drain queue and clear processing flag
+      (drain-queued-triggers machine)
+      (unless was-processing
+        (setf (machine-processing-p machine) nil)))
+    result))
 
 (defun may-fire-p (machine trigger)
   "Check if TRIGGER can be fired from the current state.
