@@ -5,9 +5,17 @@ A finite state machine library for Common Lisp with a clean, expressive API base
 
 ## Installation
 
+From the takeiteasy Quicklisp dist:
+
 ```lisp
-;; Clone into ~/quicklisp/local-projects/ then:
+(ql-dist:install-dist "https://takeiteasy.github.io/ql-dist/dist/takeiteasy.txt")
 (ql:quickload :cl-transitions)
+```
+
+Or clone into Quicklisp's local-projects:
+
+```sh
+git clone https://github.com/takeiteasy/cl-transitions ~/quicklisp/local-projects/cl-transitions
 ```
 
 ## Features
